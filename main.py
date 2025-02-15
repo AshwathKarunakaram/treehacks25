@@ -13,7 +13,13 @@ import requests
 from openai import OpenAI  # Import the OpenAI client
 from elevenlabs.client import ElevenLabs
 from elevenlabs import play
+from pydantic import BaseModel
+import requests
 
+
+
+class PerplexityRequest(BaseModel):
+    statement: str
 
 # Set your API keys in your environment variables or replace them here
 # Example: export OPENAI_API_KEY="your-key"
@@ -21,8 +27,9 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "hi"))
 ELclient = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+# perplexityClient = client = OpenAI(api_key=os.getenv("PERPLEXITY_API_KEY", "hi"), base_url="https://api.perplexity.ai")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "YOUR_ELEVENLABS_API_KEY")
-PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "YOUR_PERPLEXITY_API_KEY")
+PERPLEXITY_API_KEY=os.getenv("PERPLEXITY_API_KEY", "PERPLEXITY_API_KEY")
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -61,22 +68,70 @@ def transcribe_audio(audio_path):
         print(f"Whisper Transcription Error: {e}")
         return ""
 
-# Perplexity API: Fact-check using requests
+feedback_memory = {}
+
+def detect_figure_of_speech(statement):
+    # Basic heuristic for detecting hyperbole
+    hyperbole_keywords = ["always", "never", "forever", "literally", "everyone", "nobody", "impossible"]
+    return any(word.lower() in statement.lower() for word in hyperbole_keywords)
+
 def query_perplexity(statement):
     """
-    Fact-check a statement using the Perplexity Sonar API.
+    Fact-check a statement using the Perplexity Sonar API with adaptive behavior for figures of speech.
     """
-    url = "https://api.perplexity.ai/sonar"
-    payload = {"query": f"Is the following statement true? {statement}", "mode": "research"}
-    headers = {"Authorization": f"Bearer {PERPLEXITY_API_KEY}"}
+
+    # Check if statement is flagged as hyperbole
+    if detect_figure_of_speech(statement) or statement in feedback_memory:
+        return "This sounds like hyperbole or a figure of speech. No need to fact-check it!"
+
+    # Construct the prompt with awareness for figures of speech
+    prompt = (
+        f"Determine if the following statement is true, false, or partially true: '{statement}'. "
+        "If the statement appears to be a figure of speech or hyperbole, respond with a lighthearted comment instead of fact-checking."
+    )
     
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Perplexity API Error: {e}")
-        return {"answer": "Unknown", "sources": []}
+    url = "https://api.perplexity.ai/chat/completions"
+
+    payload = {
+        "model": "sonar",
+        "messages": [
+            {
+                "role": "system",
+                "content": "Be concise. Identify hyperbole and respond playfully if needed."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": 200,
+        "temperature": 0.3,
+        "top_p": 0.85,
+        "search_domain_filter": None,
+        "return_images": False,
+        "return_related_questions": False,
+        "search_recency_filter": "year",
+        "top_k": 0,
+        "stream": False,
+        "presence_penalty": 0,
+        "frequency_penalty": 0.5,
+        "response_format": None
+    }
+
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, json=payload, headers=headers)
+    result = response.json().get("choices")[0]["message"]["content"]
+
+    # Check if response was irrelevant and log it
+    if "unnecessary" in result.lower() or "irrelevant" in result.lower():
+        feedback_memory[statement] = "Ignore"
+        print(f"Learning: '{statement}' flagged for ignoring future responses.")
+        
+    return result
 
 # ChromaDB: Retrieve company context
 chromadb_client = chromadb.PersistentClient()
@@ -198,6 +253,15 @@ async def test_tts_endpoint(payload: dict = Body(...)):
     
     # Return the binary audio data with the appropriate media type.
     return Response(content=audio_data, media_type="audio/mpeg")
+
+@app.post("/test-perplexity")
+async def test_perplexity_endpoint(payload: PerplexityRequest):
+    """
+    Receives a JSON payload with a 'statement', queries the Perplexity API,
+    and returns the result.
+    """
+    result = query_perplexity(payload.statement)
+    return result
 
 if __name__ == "__main__":
     import uvicorn
