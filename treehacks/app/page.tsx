@@ -1,145 +1,91 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Info, Mic, Mic2, Square } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
 
-type Tag = {
-  id: string;
-  type: "misinformation" | "enrichment";
-  content: string;
-  timestamp: string;
-};
+export default function StartMeeting() {
+  const [speaker1, setSpeaker1] = useState("");
+  const [speaker2, setSpeaker2] = useState("");
+  const router = useRouter();
 
-export default function ZoomMeetingExtension() {
-  const [activeSpeaker, setActiveSpeaker] = useState<1 | 2>(1);
-  const [isResponding, setIsResponding] = useState(false);
-  const [activeTag, setActiveTag] = useState<Tag | null>(null);
-
-  const tags: Tag[] = [
-    {
-      id: "1",
-      type: "misinformation",
-      content: "Incorrect statistic",
-      timestamp: "11:49:51 AM",
-    },
-    {
-      id: "2",
-      type: "enrichment",
-      content: "Additional context",
-      timestamp: "11:49:54 AM",
-    },
-    {
-      id: "3",
-      type: "misinformation",
-      content: "Misleading claim",
-      timestamp: "11:49:56 AM",
-    },
-  ];
-
-  const handleTagClick = (tag: Tag) => {
-    setActiveTag(tag);
-    setIsResponding(true);
-    // Simulate voice response
-    setTimeout(() => setIsResponding(false), 3000);
+  const handleStartMeeting = () => {
+    if (!speaker1.trim() || !speaker2.trim()) {
+      alert("Please enter names for both speakers.");
+      return;
+    }
+    router.push(
+      `/meeting?speaker1=${encodeURIComponent(
+        speaker1
+      )}&speaker2=${encodeURIComponent(speaker2)}`
+    );
   };
 
   return (
     <div
-      className={`fixed right-4 top-4 bottom-4 w-96 bg-gray-900 border border-gray-700 rounded-lg overflow-hidden flex flex-col transition-all duration-300 ${
-        isResponding
-          ? activeTag?.type === "misinformation"
-            ? "ring-4 ring-red-500"
-            : "ring-4 ring-green-500"
-          : ""
-      }`}
+      className="fixed right-4 top-4 bottom-4 w-[28rem] border rounded-lg overflow-hidden flex flex-col transition-all duration-500 shadow-2xl backdrop-blur-md"
+      style={{
+        background: "linear-gradient(135deg, #111111, #000000)",
+        borderColor: "#444444",
+      }}
     >
-      {/* Header */}
-      <div className="p-4 bg-gray-800 border-b border-gray-700">
-        <h2 className="text-sm font-semibold text-gray-100">RTMS Monitor</h2>
-      </div>
-
-      {/* Top Display Area */}
-      <div className="h-64 bg-gray-800 p-4 flex items-center justify-center border-b border-gray-700">
-        {isResponding ? (
-          <div className="text-center">
-            <div className="animate-pulse mb-2">
-              {activeTag?.type === "misinformation" ? (
-                <AlertCircle className="w-12 h-12 mx-auto text-red-500" />
-              ) : (
-                <Info className="w-12 h-12 mx-auto text-green-500" />
-              )}
-            </div>
-            <p className="text-sm text-gray-400">
-              {activeTag?.type === "misinformation"
-                ? "Correcting..."
-                : "Enriching..."}
-            </p>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">
-            Visual content will appear here
-          </p>
-        )}
-      </div>
-
-      {/* Middle Panel (Tag Display Area) */}
-      <div className="flex-grow overflow-y-auto p-4 space-y-2">
-        {tags.map((tag) => (
-          <button
-            key={tag.id}
-            onClick={() => handleTagClick(tag)}
-            className={`w-full text-left p-3 rounded-md text-sm flex justify-between items-center transition-colors duration-200 ${
-              tag.type === "misinformation"
-                ? "bg-red-900 hover:bg-red-800 text-red-400"
-                : "bg-green-900 hover:bg-green-800 text-green-400"
-            }`}
+      <div className="p-8">
+        <h1 className="text-3xl font-bold mb-8 text-center bg-clip-text text-white">
+          Information
+        </h1>
+        <div className="mb-6">
+          <label
+            htmlFor="speaker1"
+            className="block text-sm font-medium mb-2"
+            style={{ color: "#CCCCCC" }}
           >
-            <span>{tag.content}</span>
-            <span className="text-xs text-gray-500">{tag.timestamp}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Bottom Control Area */}
-      <div className="p-4 bg-gray-800 space-y-2 border-t border-gray-700">
-        <div className="flex space-x-2">
-          <Button
-            variant={activeSpeaker === 1 ? "default" : "secondary"}
-            size="sm"
-            className={`flex-1 ${
-              activeSpeaker === 1
-                ? "bg-green-800 hover:bg-green-700"
-                : "bg-gray-700"
-            }`}
-            onClick={() => setActiveSpeaker(1)}
-          >
-            <Mic className="w-4 h-4 mr-2" />
-            Speaker 1
-          </Button>
-          <Button
-            variant={activeSpeaker === 2 ? "default" : "secondary"}
-            size="sm"
-            className={`flex-1 ${
-              activeSpeaker === 2
-                ? "bg-green-800 hover:bg-green-700"
-                : "bg-gray-700"
-            }`}
-            onClick={() => setActiveSpeaker(2)}
-          >
-            <Mic2 className="w-4 h-4 mr-2" />
-            Speaker 2
-          </Button>
+            Speaker 1 Name
+          </label>
+          <input
+            id="speaker1"
+            type="text"
+            placeholder="Enter Speaker 1 Name"
+            value={speaker1}
+            onChange={(e) => setSpeaker1(e.target.value)}
+            className="w-full px-4 py-2 rounded-lg focus:outline-none transition"
+            style={{
+              background: "rgba(20,20,20,0.9)",
+              border: "1px solid #444444",
+              color: "#FFFFFF",
+            }}
+          />
         </div>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="w-full bg-red-800 hover:bg-red-700"
-          onClick={() => setIsResponding(false)}
+        <div className="mb-8">
+          <label
+            htmlFor="speaker2"
+            className="block text-sm font-medium mb-2"
+            style={{ color: "#CCCCCC" }}
+          >
+            Speaker 2 Name
+          </label>
+          <input
+            id="speaker2"
+            type="text"
+            placeholder="Enter Speaker 2 Name"
+            value={speaker2}
+            onChange={(e) => setSpeaker2(e.target.value)}
+            className="w-full px-4 py-2 rounded-lg focus:outline-none transition"
+            style={{
+              background: "rgba(20,20,20,0.9)",
+              border: "1px solid #444444",
+              color: "#FFFFFF",
+            }}
+          />
+        </div>
+        <button
+          onClick={handleStartMeeting}
+          className="w-full py-3 rounded-lg shadow-lg transition-all duration-300 transform hover:-translate-y-1"
+          style={{
+            background: "#00FFAA",
+            color: "#000000",
+          }}
         >
-          <Square className="w-4 h-4 mr-2" />
-          Stop/End
-        </Button>
+          Start Meeting
+        </button>
       </div>
     </div>
   );
