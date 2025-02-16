@@ -163,6 +163,8 @@ def handle_transcript(transcript: str) -> str:
     # Generate an enriched statement using overall context.
     enriched_statement = orchestrate_context(transcript)
     print("Enriched Statement:", enriched_statement)
+
+    print("ding")
     
     # Query Perplexity with the enriched statement.
     _, result = query_perplexity(enriched_statement)
