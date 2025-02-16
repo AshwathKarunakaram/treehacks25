@@ -8,10 +8,9 @@ import { Howl } from "howler";
 // Define a Tag type for our transcript markers.
 type Tag = {
   id: string;
-  type: "misinformation" | "enrichment";
   content: string;
   timestamp: string;
-  s3key: string;
+  s3url: string;
 };
 
 export default function ZoomMeetingExtension() {
@@ -30,24 +29,34 @@ export default function ZoomMeetingExtension() {
   const currentSoundRef = useRef<Howl | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
 
+  const pingSound = new Howl({
+    src: "https://audiotreehacks.s3.us-east-1.amazonaws.com/ping.mp3",
+    html5: true, // enables streaming if necessary
+  });
+
+
   // Set up an EventSource to listen for new tag data from the backend.
   useEffect(() => {
     const eventSource = new EventSource(
       "http://localhost:8001/api/stream-tags"
     );
     eventSource.onmessage = (e) => {
+      console.log("Raw event data:", e.data);
+
       try {
         const data = JSON.parse(e.data);
         // Create a new tag from the incoming data.
         const newTag: Tag = {
           id: Date.now().toString(), // or a unique id from the backend
-          type: data.isTrue ? "enrichment" : "misinformation",
           content: data.justification, // the preview text
           timestamp: new Date().toLocaleTimeString(),
-          s3key: data.s3key,
+          s3url: data.s3url,
         };
+
         // Prepend the new tag.
         setTags((prev) => [newTag, ...prev]);
+        pingSound.play();
+
       } catch (err) {
         console.error("Error parsing event data:", err);
       }
@@ -77,7 +86,7 @@ export default function ZoomMeetingExtension() {
     setProgress(0);
 
     // Construct the audio URL using the tag's s3key.
-    const audioUrl = `${s3BucketUrl}${tag.s3key}`;
+    const audioUrl = tag.s3url;
     const sound = new Howl({
       src: [audioUrl],
       html5: true, // enables streaming large files
@@ -192,6 +201,8 @@ export default function ZoomMeetingExtension() {
             Visual content will appear here
           </p>
         )}
+
+        
       </div>
 
       {/* Middle Panel (Tag Display Area) */}
