@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from collections import deque
 from pydantic import BaseModel
 import requests
+import boto3
 
 # LangChain imports for context orchestration
 from langchain.chat_models import ChatOpenAI
@@ -17,6 +18,22 @@ from langchain.prompts import PromptTemplate
 # Import API clients
 from openai import OpenAI
 from elevenlabs.client import ElevenLabs
+
+#Stream Imports
+from fastapi import FastAPI
+from sse_starlette.sse import EventSourceResponse
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # -----------------------------------------------------------------------------
 # Load Environment Variables
@@ -37,6 +54,10 @@ class AnswerFormat(BaseModel):
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 ELclient = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "PERPLEXITY_API_KEY")
+aws_access_key_id = os.getenv("aws_access_key_id","hi")
+aws_secret_access_key = os.getenv("aws_secret_access_key","hi")
+s3 = boto3.client("s3", aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+# aws_session_token="your-session-token"  # Include if needed
 
 # -----------------------------------------------------------------------------
 # Original Function: Query Perplexity
@@ -73,8 +94,21 @@ def query_perplexity(statement: str):
         "Content-Type": "application/json"
     }
     response = requests.post(url, headers=headers, json=payload).json()
-    result = response["choices"][0]["message"]["content"]
-    return result, result["justification"]
+    
+    # Extract the content as a string
+    content_str = response["choices"][0]["message"]["content"]
+    print("\nFull Response:", content_str)
+
+    # Extract the justification directly from the response
+    justification_start = content_str.find('"justification":') + len('"justification":')
+    justification_end = content_str.find(',"sources"')  # Stop at sources
+    justification = content_str[justification_start:justification_end].strip().strip('"')
+
+    true_start = content_str.find('"isTrue":') + len('"isTrue":')
+    true_end = content_str.find(',"justification"')  # Stop at sources
+    true_str = content_str[true_start:true_end].strip().strip('"')
+
+    return content_str, justification, true_str
 
 # -----------------------------------------------------------------------------
 # New Endpoints: Pydantic Model for Test Perplexity
@@ -82,9 +116,7 @@ def query_perplexity(statement: str):
 class PerplexityRequest(BaseModel):
     statement: str
 
-# -----------------------------------------------------------------------------
-# Initialize FastAPI Application
-# -----------------------------------------------------------------------------
+
 # -----------------------------------------------------------------------------
 # Global Context Memory & LangChain Orchestration for Context
 # -----------------------------------------------------------------------------
@@ -163,13 +195,11 @@ def handle_transcript(transcript: str) -> str:
     # Generate an enriched statement using overall context.
     enriched_statement = orchestrate_context(transcript)
     print("Enriched Statement:", enriched_statement)
-
-    print("ding")
     
     # Query Perplexity with the enriched statement.
-    _, result = query_perplexity(enriched_statement)
-    print(result)
-    audio_bytes = text_to_speech(result)
+    _, justification, true = query_perplexity(enriched_statement)
+    print(justification)
+    audio_bytes = text_to_speech(justification)
     
     # Create a unique filename.
     unique_filename = f"response_{uuid.uuid4().hex}.mp3"
@@ -186,10 +216,42 @@ def handle_transcript(transcript: str) -> str:
     with open(output_path, "wb") as f:
         f.write(audio_bytes)
     
+    s3url = upload_to_s3(output_path, unique_filename, "audiotreehacks")
     print("Audio stored at:", output_path)
-    
-    # Return the relative URL path so your Next.js frontend can load it.
-    return f"/test/{unique_filename}"
+
+    # Publish the event to the SSE stream.
+    # The URL is relative to the Next.js public folder. Adjust as needed.
+    asyncio.create_task(publish_event({"s3url": s3url, "justification": justification, "isTrue": true}))
+
+    return s3url
+
+def upload_to_s3(file_path, key, bucket_name="audiotreehacks"):
+    s3.upload_file(file_path, bucket_name, key)
+    return f"https://{bucket_name}.s3.amazonaws.com/{key}"
+
+# -----------------------------------------------------------------------------
+# SSE: Global Event Queue and Publisher
+# -----------------------------------------------------------------------------
+event_queue = asyncio.Queue()
+
+async def publish_event(event: dict):
+    """
+    Asynchronously publishes an event to the global SSE event queue.
+    """
+    await event_queue.put(event)
+
+@app.get("/api/stream-tags")
+async def sse_endpoint():
+    """
+    SSE endpoint that streams events from the global event queue.
+    Clients connecting to this endpoint will receive events as JSON strings.
+    """
+    async def event_generator():
+        while True:
+            event = await event_queue.get()
+            yield {"data": json.dumps(event)}
+    return EventSourceResponse(event_generator())
+        
 
 
 # -----------------------------------------------------------------------------
@@ -210,6 +272,7 @@ async def fetch_transcript():
                 data = json.loads(response)
                 # Adjust this based on your Zoom RTMS payload structure.
                 chunk = data.get("content", {}).get("data", "")
+                print(chunk)
                 if chunk and len(chunk.strip().split()) >= 5:
                     print("Received chunk:", chunk)
                     handle_transcript(chunk)

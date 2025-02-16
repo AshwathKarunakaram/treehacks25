@@ -33,7 +33,7 @@ export default function ZoomMeetingExtension() {
   // Set up an EventSource to listen for new tag data from the backend.
   useEffect(() => {
     const eventSource = new EventSource(
-      "http://localhost:8000/api/stream-tags"
+      "http://localhost:8001/api/stream-tags"
     );
     eventSource.onmessage = (e) => {
       try {
