@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "next/navigation";
-import useSound from "use-sound";
-import { AlertCircle, Info, Mic, Square } from "lucide-react";
+import { AlertCircle, Info, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Howl } from "howler";
 
 // Define a Tag type for our transcript markers.
 type Tag = {
@@ -12,62 +11,64 @@ type Tag = {
   type: "misinformation" | "enrichment";
   content: string;
   timestamp: string;
+  s3key: string;
 };
 
 export default function ZoomMeetingExtension() {
-  // Retrieve a single speaker name from query parameters.
-  const searchParams = useSearchParams();
-  const speakerName = searchParams.get("speaker1") || "Speaker";
+  // S3 bucket base URL.
+  const s3BucketUrl = "https://audiotreehacks.s3.us-east-1.amazonaws.com/";
 
-  // State to track whether the voice agent is responding,
-  // the active tag (if any), and progress of the audio.
+  // State to track tags coming from the backend.
+  const [tags, setTags] = useState<Tag[]>([]);
+
+  // State for handling playback UI.
   const [isResponding, setIsResponding] = useState(false);
   const [activeTag, setActiveTag] = useState<Tag | null>(null);
   const [progress, setProgress] = useState(0);
+
+  // Refs to store the current Howl instance and progress interval.
+  const currentSoundRef = useRef<Howl | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
 
-  // Load an audio clip using the useSound hook.
-  // (Ensure the audio file is placed in your public/temp folder.)
-  const [play, { stop, sound }] = useSound("temp/try.mp3", {
-    interrupt: true,
-    onend: () => {
-      // When the audio finishes playing, update state and clear progress.
-      setIsResponding(false);
-      setProgress(100);
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
+  // Set up an EventSource to listen for new tag data from the backend.
+  useEffect(() => {
+    const eventSource = new EventSource(
+      "http://localhost:8000/api/stream-tags"
+    );
+    eventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        // Create a new tag from the incoming data.
+        const newTag: Tag = {
+          id: Date.now().toString(), // or a unique id from the backend
+          type: data.isTrue ? "enrichment" : "misinformation",
+          content: data.justification, // the preview text
+          timestamp: new Date().toLocaleTimeString(),
+          s3key: data.s3key,
+        };
+        // Prepend the new tag.
+        setTags((prev) => [newTag, ...prev]);
+      } catch (err) {
+        console.error("Error parsing event data:", err);
       }
-    },
-  });
+    };
 
-  // Sample tags for demonstration.
-  const tags: Tag[] = [
-    {
-      id: "1",
-      type: "misinformation",
-      content: "Incorrect statistic",
-      timestamp: "11:49:51 AM",
-    },
-    {
-      id: "2",
-      type: "enrichment",
-      content: "Additional context",
-      timestamp: "11:49:54 AM",
-    },
-    {
-      id: "3",
-      type: "misinformation",
-      content: "Misleading claim",
-      timestamp: "11:49:56 AM",
-    },
-  ];
+    eventSource.onerror = (err) => {
+      console.error("EventSource failed:", err);
+      eventSource.close();
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
 
   // Function to handle a tag click.
-  // It stops any currently playing audio, resets progress, marks the active tag,
-  // and then plays the associated audio clip.
   const handleTagClick = (tag: Tag) => {
     // Stop any currently playing audio.
-    stop();
+    if (currentSoundRef.current) {
+      currentSoundRef.current.stop();
+    }
     if (progressIntervalRef.current) {
       clearInterval(progressIntervalRef.current);
     }
@@ -75,13 +76,25 @@ export default function ZoomMeetingExtension() {
     setIsResponding(true);
     setProgress(0);
 
-    // Play the audio clip.
-    play();
+    // Construct the audio URL using the tag's s3key.
+    const audioUrl = `${s3BucketUrl}${tag.s3key}`;
+    const sound = new Howl({
+      src: [audioUrl],
+      html5: true, // enables streaming large files
+      onend: () => {
+        setIsResponding(false);
+        setProgress(100);
+        if (progressIntervalRef.current) {
+          clearInterval(progressIntervalRef.current);
+        }
+      },
+    });
+    currentSoundRef.current = sound;
+    sound.play();
 
     // Start an interval to update the progress bar.
     progressIntervalRef.current = window.setInterval(() => {
-      if (sound && sound.playing()) {
-        // Retrieve current playback time and duration from Howler.
+      if (sound.playing()) {
         const currentTime = sound.seek() as number;
         const duration = sound.duration();
         const percent = (currentTime / duration) * 100;
@@ -90,9 +103,11 @@ export default function ZoomMeetingExtension() {
     }, 50);
   };
 
-  // Function to stop the voice agent (stop current response and reset progress).
+  // Function to stop playback and reset progress.
   const stopVoiceAgent = () => {
-    stop();
+    if (currentSoundRef.current) {
+      currentSoundRef.current.stop();
+    }
     setIsResponding(false);
     setProgress(0);
     if (progressIntervalRef.current) {
@@ -100,12 +115,9 @@ export default function ZoomMeetingExtension() {
     }
   };
 
-  // Additional function to cancel the overall voice chat.
-  // Here you might also clear any accumulated conversation context.
+  // Optional: Cancel the overall voice chat.
   const cancelVoiceChat = () => {
     stopVoiceAgent();
-    // (Optional) Clear any conversation context here if you're maintaining one.
-    // For example: contextMemory.clear();
     console.log("Voice chat canceled and context cleared.");
   };
 
@@ -125,11 +137,7 @@ export default function ZoomMeetingExtension() {
           borderColor: "#444444",
         }}
       >
-        <h2
-          className="text-sm font-bold bg-clip-text text-white"
-          style={{
-          }}
-        >
+        <h2 className="text-sm font-bold bg-clip-text text-white">
           RTMS Monitor
         </h2>
         {isResponding && (
@@ -157,9 +165,9 @@ export default function ZoomMeetingExtension() {
           borderColor: "#444444",
         }}
       >
-        {isResponding ? (
+        {isResponding && activeTag ? (
           <div className="relative z-10 text-center transition-opacity duration-300">
-            {activeTag?.type === "misinformation" ? (
+            {activeTag.type === "misinformation" ? (
               <AlertCircle
                 className="w-16 h-16 mx-auto"
                 style={{ color: "#FF5555" }}
@@ -174,7 +182,7 @@ export default function ZoomMeetingExtension() {
               className="text-lg font-medium mt-4"
               style={{ color: "#CCCCCC" }}
             >
-              {activeTag?.type === "misinformation"
+              {activeTag.type === "misinformation"
                 ? "Correcting..."
                 : "Enriching..."}
             </p>
@@ -188,22 +196,29 @@ export default function ZoomMeetingExtension() {
 
       {/* Middle Panel (Tag Display Area) */}
       <div className="flex-grow overflow-y-auto p-6 space-y-3">
-        {tags.map((tag) => (
-          <button
-            key={tag.id}
-            onClick={() => handleTagClick(tag)}
-            className="w-full text-left p-4 rounded-md text-base flex justify-between items-center transition-transform duration-200 shadow-md transform hover:-translate-y-1"
-            style={{
-              background: tag.type === "misinformation" ? "#330000" : "#003300",
-              color: tag.type === "misinformation" ? "#FF5555" : "#55FF55",
-            }}
-          >
-            <span>{tag.content}</span>
-            <span className="text-xs" style={{ color: "#AAAAAA" }}>
-              {tag.timestamp}
-            </span>
-          </button>
-        ))}
+        {tags.length === 0 ? (
+          <p className="text-center text-sm text-gray-400">
+            Waiting for new tags...
+          </p>
+        ) : (
+          tags.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={() => handleTagClick(tag)}
+              className="w-full text-left p-4 rounded-md text-base flex justify-between items-center transition-transform duration-200 shadow-md transform hover:-translate-y-1"
+              style={{
+                background:
+                  tag.type === "misinformation" ? "#330000" : "#003300",
+                color: tag.type === "misinformation" ? "#FF5555" : "#55FF55",
+              }}
+            >
+              <span>{tag.content}</span>
+              <span className="text-xs" style={{ color: "#AAAAAA" }}>
+                {tag.timestamp}
+              </span>
+            </button>
+          ))
+        )}
       </div>
 
       {/* Bottom Control Area: Two Buttons */}
